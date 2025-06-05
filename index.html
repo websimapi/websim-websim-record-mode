@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Websim Record Mode</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="logo">
+                <h1>🎙️ Websim Record Mode</h1>
+                <p>Capture, transcribe, and transform your conversations</p>
+            </div>
+            <div class="user-info">
+                <div class="user-avatar" id="userAvatar"></div>
+                <span class="username" id="username">Loading...</span>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Meeting Setup -->
+            <div class="meeting-setup" id="meetingSetup">
+                <div class="setup-card">
+                    <h2>Start or Join a Meeting</h2>
+                    <div class="setup-options">
+                        <button class="primary-btn" id="hostMeetingBtn">
+                            <span class="btn-icon">🎯</span>
+                            Host New Meeting
+                        </button>
+                        <div class="join-section">
+                            <span class="participants-count" id="participantsCount">0 participants online</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Meeting -->
+            <div class="meeting-active hidden" id="meetingActive">
+                <div class="meeting-header">
+                    <div class="meeting-info">
+                        <h3>Active Meeting</h3>
+                        <div class="meeting-status">
+                            <span class="status-dot" id="recordingStatus"></span>
+                            <span id="recordingText">Ready to record</span>
+                        </div>
+                    </div>
+                    <div class="meeting-controls">
+                        <button class="control-btn" id="recordBtn">
+                            <span class="btn-icon">🎙️</span>
+                            Start Recording
+                        </button>
+                        <button class="control-btn secondary" id="endMeetingBtn">
+                            <span class="btn-icon">🚪</span>
+                            End Meeting
+                        </button>
+                    </div>
+                </div>
+
+                <div class="meeting-content">
+                    <!-- Participants Panel -->
+                    <div class="participants-panel">
+                        <h4>Participants</h4>
+                        <div class="participants-list" id="participantsList">
+                            <!-- Dynamic participants -->
+                        </div>
+                    </div>
+
+                    <!-- Live Transcription -->
+                    <div class="transcription-panel">
+                        <h4>Live Transcription</h4>
+                        <div class="transcription-content" id="transcriptionContent">
+                            <p class="placeholder-text">Transcription will appear here when recording starts...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analysis Results -->
+            <div class="analysis-results hidden" id="analysisResults">
+                <div class="results-header">
+                    <h3>Meeting Analysis</h3>
+                    <button class="control-btn" id="newMeetingBtn">
+                        <span class="btn-icon">➕</span>
+                        New Meeting
+                    </button>
+                </div>
+
+                <div class="results-content">
+                    <div class="result-section">
+                        <h4>📝 Key Points</h4>
+                        <div class="key-points" id="keyPoints">
+                            <!-- Dynamic content -->
+                        </div>
+                    </div>
+
+                    <div class="result-section">
+                        <h4>✅ Action Items</h4>
+                        <div class="action-items" id="actionItems">
+                            <!-- Dynamic content -->
+                        </div>
+                    </div>
+
+                    <div class="result-section">
+                        <h4>💻 Generated Code</h4>
+                        <div class="generated-code" id="generatedCode">
+                            <!-- Dynamic content -->
+                        </div>
+                    </div>
+
+                    <div class="result-section">
+                        <h4>📋 Full Transcript</h4>
+                        <div class="full-transcript" id="fullTranscript">
+                            <!-- Dynamic content -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
+
