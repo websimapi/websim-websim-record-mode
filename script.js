@@ -171,7 +171,7 @@ class WebsimRecordMode {
                 } 
             });
             
-            // Set up MediaRecorder for audio storage
+            // Set up MediaRecorder for audio storage AND streaming
             this.mediaRecorder = new MediaRecorder(this.audioStream, {
                 mimeType: 'audio/webm;codecs=opus'
             });
@@ -181,6 +181,9 @@ class WebsimRecordMode {
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data.size > 0) {
                     this.recordedChunks.push(event.data);
+                    
+                    // Stream audio to other participants
+                    this.streamAudioToParticipants(event.data);
                 }
             };
             
@@ -203,24 +206,91 @@ class WebsimRecordMode {
                 this.recognition.start();
             }
             
-            // Start recording
-            this.mediaRecorder.start(1000);
+            // Start recording with smaller chunks for real-time streaming
+            this.mediaRecorder.start(200); // 200ms chunks for low latency
             this.isRecording = true;
             
             // Update UI
-            this.recordBtn.innerHTML = '<span class="btn-icon">⏹️</span> Stop Recording';
+            this.recordBtn.innerHTML = '<span class="btn-icon">⏹️</span> Stop Transmission';
             this.recordBtn.classList.add('danger');
             this.recordingStatus.classList.add('recording');
-            this.recordingText.textContent = 'Recording in progress...';
+            this.recordingText.textContent = 'Transmitting audio...';
             
             // Clear previous transcription
             this.transcriptionContent.innerHTML = '<p class="placeholder-text">Start speaking...</p>';
             this.currentTranscript = '';
             
+            // Initialize audio context for playback
+            this.initializeAudioPlayback();
+            
         } catch (error) {
             console.error('Error starting recording:', error);
             alert('Failed to access microphone. Please check your permissions.');
         }
+    }
+
+    streamAudioToParticipants(audioData) {
+        // Convert audio data to base64 for transmission
+        const reader = new FileReader();
+        reader.onload = () => {
+            const audioBase64 = reader.result.split(',')[1];
+            
+            // Broadcast audio chunk to all participants
+            this.room.send({
+                type: 'audioStream',
+                audioData: audioBase64,
+                timestamp: Date.now(),
+                echo: false // Don't echo back to sender
+            });
+        };
+        reader.readAsDataURL(audioData);
+    }
+
+    initializeAudioPlayback() {
+        if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Create audio elements for each participant
+        this.participantAudioElements = {};
+    }
+
+    async playReceivedAudio(audioBase64, fromClientId) {
+        try {
+            // Convert base64 back to audio blob
+            const audioBlob = this.base64ToBlob(audioBase64, 'audio/webm');
+            const audioUrl = URL.createObjectURL(audioBlob);
+            
+            // Get or create audio element for this participant
+            if (!this.participantAudioElements[fromClientId]) {
+                this.participantAudioElements[fromClientId] = new Audio();
+                this.participantAudioElements[fromClientId].volume = 0.8;
+            }
+            
+            const audioElement = this.participantAudioElements[fromClientId];
+            audioElement.src = audioUrl;
+            
+            // Play the audio
+            await audioElement.play();
+            
+            // Clean up URL after playing
+            audioElement.onended = () => {
+                URL.revokeObjectURL(audioUrl);
+            };
+            
+        } catch (error) {
+            console.error('Error playing received audio:', error);
+        }
+    }
+
+    base64ToBlob(base64, mimeType) {
+        const bytes = atob(base64);
+        const byteNumbers = new Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) {
+            byteNumbers[i] = bytes.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], { type: mimeType });
     }
 
     handleSpeechResult(event) {
@@ -279,10 +349,16 @@ class WebsimRecordMode {
             this.isRecording = false;
             
             // Update UI
-            this.recordBtn.innerHTML = '<span class="btn-icon">🎙️</span> Start Recording';
+            this.recordBtn.innerHTML = '<span class="btn-icon">🎙️</span> Start Transmission';
             this.recordBtn.classList.remove('danger');
             this.recordingStatus.classList.remove('recording');
-            this.recordingText.textContent = 'Recording complete';
+            this.recordingText.textContent = 'Transmission complete';
+            
+            // Notify other participants that transmission stopped
+            this.room.send({
+                type: 'transmissionStopped',
+                echo: false
+            });
         }
     }
 
@@ -416,6 +492,13 @@ class WebsimRecordMode {
                 break;
             case 'disconnected':
                 console.log(`${data.username} left the meeting`);
+                break;
+            case 'audioStream':
+                // Play received audio from other participants
+                this.playReceivedAudio(data.audioData, data.clientId);
+                break;
+            case 'transmissionStopped':
+                console.log(`${data.username} stopped transmission`);
                 break;
             default:
                 console.log('Received event:', data);
