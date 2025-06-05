@@ -7,8 +7,7 @@ class WebsimRecordMode {
         this.isRecording = false;
         this.isHost = false;
         this.currentTranscript = '';
-        this.heartbeatInterval = null;
-        this.participantHeartbeats = {};
+        this.currentRoomId = null;
         
         this.initializeElements();
         this.setupEventListeners();
@@ -43,6 +42,9 @@ class WebsimRecordMode {
         this.actionItems = document.getElementById('actionItems');
         this.generatedCode = document.getElementById('generatedCode');
         this.fullTranscript = document.getElementById('fullTranscript');
+        
+        // Rooms list
+        this.roomsList = document.getElementById('roomsList');
     }
 
     setupEventListeners() {
@@ -66,14 +68,14 @@ class WebsimRecordMode {
             this.room.subscribePresence((presence) => {
                 this.updateParticipantsCount();
                 this.updateParticipantsList();
+                this.updateRoomsList();
             });
             
             // Subscribe to room state changes
             this.room.subscribeRoomState((roomState) => {
-                if (roomState.meetingActive && !this.isInMeeting()) {
-                    this.joinMeeting();
-                } else if (!roomState.meetingActive && this.isInMeeting()) {
-                    this.leaveMeeting();
+                this.updateRoomsList();
+                if (roomState.activeRooms && roomState.activeRooms[this.currentRoomId]) {
+                    this.updateParticipantsList();
                 }
             });
 
@@ -83,6 +85,7 @@ class WebsimRecordMode {
             };
             
             this.updateParticipantsCount();
+            this.updateRoomsList();
             
             // Check if there's already an active meeting
             if (this.room.roomState.meetingActive) {
@@ -100,38 +103,80 @@ class WebsimRecordMode {
     }
 
     updateParticipantsList() {
-        if (!this.isInMeeting()) return;
+        if (!this.isInMeeting() || !this.currentRoomId) return;
+        
+        const activeRooms = this.room.roomState.activeRooms || {};
+        const currentRoom = activeRooms[this.currentRoomId];
+        
+        if (!currentRoom) return;
         
         this.participantsList.innerHTML = '';
-        
-        // Use heartbeat tracking for more accurate participant list
-        const activeParticipants = Object.keys(this.participantHeartbeats)
-            .filter(clientId => this.room.peers[clientId])
-            .map(clientId => this.room.peers[clientId]);
-        
-        activeParticipants.forEach(peer => {
+        Object.values(currentRoom.participants || {}).forEach(participant => {
             const participantDiv = document.createElement('div');
             participantDiv.className = 'participant-item';
             participantDiv.innerHTML = `
-                <div class="participant-avatar" style="background-image: url(${peer.avatarUrl})"></div>
-                <span class="participant-name">${peer.username}</span>
+                <div class="participant-avatar" style="background-image: url(${participant.avatarUrl})"></div>
+                <span class="participant-name">${participant.username}</span>
             `;
             this.participantsList.appendChild(participantDiv);
         });
+    }
+
+    updateRoomsList() {
+        const roomsList = document.getElementById('roomsList');
+        const activeRooms = this.room.roomState.activeRooms || {};
         
-        // Also update the count on setup screen
-        this.updateParticipantsCount();
+        if (Object.keys(activeRooms).length === 0) {
+            roomsList.innerHTML = '<p class="no-rooms-text">No active rooms available</p>';
+            return;
+        }
+        
+        roomsList.innerHTML = '';
+        Object.entries(activeRooms).forEach(([roomId, roomData]) => {
+            const participantCount = Object.keys(roomData.participants || {}).length;
+            const roomDiv = document.createElement('div');
+            roomDiv.className = 'room-item';
+            roomDiv.innerHTML = `
+                <div class="room-info">
+                    <div class="room-name">${roomData.name || `Room ${roomId.slice(0, 8)}`}</div>
+                    <div class="room-details">${participantCount} participant${participantCount !== 1 ? 's' : ''} • Host: ${roomData.hostName}</div>
+                </div>
+                <button class="join-room-btn" onclick="app.joinSpecificRoom('${roomId}')">Join</button>
+            `;
+            roomsList.appendChild(roomDiv);
+        });
     }
 
     async hostMeeting() {
-        this.isHost = true;
+        const roomId = 'room_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        const currentUser = this.room.peers[this.room.clientId];
         
-        // Start the meeting in room state
-        this.room.updateRoomState({
-            meetingActive: true,
+        this.isHost = true;
+        this.currentRoomId = roomId;
+        
+        // Create new room in active rooms
+        const activeRooms = this.room.roomState.activeRooms || {};
+        activeRooms[roomId] = {
+            name: `${currentUser.username}'s Meeting`,
             host: this.room.clientId,
+            hostName: currentUser.username,
+            participants: {
+                [this.room.clientId]: {
+                    username: currentUser.username,
+                    avatarUrl: currentUser.avatarUrl,
+                    joinedAt: Date.now()
+                }
+            },
             transcript: '',
             startTime: Date.now()
+        };
+        
+        this.room.updateRoomState({ activeRooms });
+        
+        // Update user presence to show they're in this room
+        this.room.updatePresence({
+            currentRoom: roomId,
+            inMeeting: true
         });
         
         this.showMeetingView();
@@ -147,7 +192,6 @@ class WebsimRecordMode {
         this.analysisResults.classList.add('hidden');
         
         this.updateParticipantsList();
-        this.startHeartbeat();
     }
 
     leaveMeeting() {
@@ -158,8 +202,6 @@ class WebsimRecordMode {
         if (this.isRecording) {
             this.stopRecording();
         }
-        
-        this.stopHeartbeat();
     }
 
     isInMeeting() {
@@ -420,13 +462,27 @@ class WebsimRecordMode {
             await this.analyzeTranscript();
         }
         
-        // End meeting in room state
-        this.room.updateRoomState({
-            meetingActive: false,
-            host: null,
-            endTime: Date.now()
+        // Remove room from active rooms if host
+        if (this.isHost && this.currentRoomId) {
+            const activeRooms = this.room.roomState.activeRooms || {};
+            delete activeRooms[this.currentRoomId];
+            this.room.updateRoomState({ activeRooms });
+        } else if (this.currentRoomId) {
+            // Remove participant from room
+            const activeRooms = this.room.roomState.activeRooms || {};
+            if (activeRooms[this.currentRoomId] && activeRooms[this.currentRoomId].participants) {
+                delete activeRooms[this.currentRoomId].participants[this.room.clientId];
+                this.room.updateRoomState({ activeRooms });
+            }
+        }
+        
+        // Update user presence
+        this.room.updatePresence({
+            currentRoom: null,
+            inMeeting: false
         });
         
+        this.currentRoomId = null;
         this.showAnalysisResults();
     }
 
@@ -528,86 +584,55 @@ class WebsimRecordMode {
         this.isHost = false;
         this.currentTranscript = '';
         this.analysisData = null;
+        this.currentRoomId = null;
+        
+        // Update user presence
+        this.room.updatePresence({
+            currentRoom: null,
+            inMeeting: false
+        });
         
         this.analysisResults.classList.add('hidden');
         this.meetingSetup.classList.remove('hidden');
     }
 
-    startHeartbeat() {
-        // Send heartbeat every 3 seconds to check participant connectivity
-        this.heartbeatInterval = setInterval(() => {
-            this.sendHeartbeat();
-            this.checkParticipantActivity();
-        }, 3000);
+    joinSpecificRoom(roomId) {
+        const currentUser = this.room.peers[this.room.clientId];
+        const activeRooms = this.room.roomState.activeRooms || {};
         
-        // Initialize heartbeat tracking for current participants
-        Object.keys(this.room.peers).forEach(clientId => {
-            this.participantHeartbeats[clientId] = Date.now();
-        });
-    }
-
-    stopHeartbeat() {
-        if (this.heartbeatInterval) {
-            clearInterval(this.heartbeatInterval);
-            this.heartbeatInterval = null;
+        if (!activeRooms[roomId]) {
+            alert('This room is no longer available');
+            return;
         }
-        this.participantHeartbeats = {};
-    }
-
-    sendHeartbeat() {
-        this.room.send({
-            type: 'heartbeat',
-            timestamp: Date.now(),
-            echo: false
-        });
-    }
-
-    checkParticipantActivity() {
-        const now = Date.now();
-        const timeout = 10000; // 10 seconds timeout
         
-        // Remove participants who haven't sent heartbeat recently
-        Object.keys(this.participantHeartbeats).forEach(clientId => {
-            if (now - this.participantHeartbeats[clientId] > timeout) {
-                delete this.participantHeartbeats[clientId];
-                // Force update participants list
-                this.updateParticipantsList();
-            }
+        this.currentRoomId = roomId;
+        this.isHost = false;
+        
+        // Add user to room participants
+        activeRooms[roomId].participants[this.room.clientId] = {
+            username: currentUser.username,
+            avatarUrl: currentUser.avatarUrl,
+            joinedAt: Date.now()
+        };
+        
+        this.room.updateRoomState({ activeRooms });
+        
+        // Update user presence
+        this.room.updatePresence({
+            currentRoom: roomId,
+            inMeeting: true
         });
         
-        // Add any new participants from room.peers
-        Object.keys(this.room.peers).forEach(clientId => {
-            if (!this.participantHeartbeats[clientId]) {
-                this.participantHeartbeats[clientId] = now;
-            }
-        });
+        this.showMeetingView();
     }
 
     handleRoomEvent(data) {
         switch (data.type) {
             case 'connected':
                 console.log(`${data.username} joined the meeting`);
-                this.participantHeartbeats[data.clientId] = Date.now();
-                this.updateParticipantsList();
                 break;
             case 'disconnected':
                 console.log(`${data.username} left the meeting`);
-                delete this.participantHeartbeats[data.clientId];
-                this.updateParticipantsList();
-                break;
-            case 'heartbeat':
-                // Update last seen time for this participant
-                this.participantHeartbeats[data.clientId] = data.timestamp;
-                // Respond with our own heartbeat
-                this.room.send({
-                    type: 'heartbeatResponse',
-                    timestamp: Date.now(),
-                    echo: false
-                });
-                break;
-            case 'heartbeatResponse':
-                // Update last seen time for this participant
-                this.participantHeartbeats[data.clientId] = data.timestamp;
                 break;
             case 'audioStream':
                 // Play received audio from other participants with mime type
@@ -624,5 +649,5 @@ class WebsimRecordMode {
 
 // Initialize the application when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-    new WebsimRecordMode();
+    window.app = new WebsimRecordMode();
 });
