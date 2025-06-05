@@ -4,6 +4,7 @@ class WebsimRecordMode {
         this.mediaRecorder = null;
         this.audioStream = null;
         this.recordedChunks = [];
+        this.audioSegments = [];
         this.isRecording = false;
         this.isHost = false;
         this.currentTranscript = '';
@@ -223,30 +224,26 @@ class WebsimRecordMode {
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
-                    sampleRate: 44100
+                    sampleRate: 16000 // Lower sample rate for better streaming
                 } 
             });
             
-            // Use a more compatible format for streaming
-            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-                ? 'audio/webm;codecs=opus' 
-                : MediaRecorder.isTypeSupported('audio/mp4;codecs=mp4a.40.2')
-                ? 'audio/mp4;codecs=mp4a.40.2'
-                : 'audio/webm';
+            // Use a widely supported format
+            const mimeType = 'audio/webm;codecs=opus';
             
-            // Set up MediaRecorder for audio storage AND streaming
+            // Set up MediaRecorder for complete segments instead of streaming chunks
             this.mediaRecorder = new MediaRecorder(this.audioStream, {
                 mimeType: mimeType
             });
             
             this.recordedChunks = [];
+            this.audioSegments = [];
             
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data.size > 0) {
                     this.recordedChunks.push(event.data);
-                    
-                    // Stream audio to other participants
-                    this.streamAudioToParticipants(event.data);
+                    // Send complete audio segment
+                    this.sendCompleteAudioSegment(event.data);
                 }
             };
             
@@ -269,8 +266,8 @@ class WebsimRecordMode {
                 this.recognition.start();
             }
             
-            // Start recording with larger chunks for better stability
-            this.mediaRecorder.start(1000); // 1 second chunks for better stability
+            // Start recording with 2-second segments for better streaming
+            this.mediaRecorder.start(2000);
             this.isRecording = true;
             
             // Update UI
@@ -292,25 +289,52 @@ class WebsimRecordMode {
         }
     }
 
-    streamAudioToParticipants(audioData) {
-        // Use arrayBuffer for more reliable transmission
-        audioData.arrayBuffer().then(buffer => {
-            // Convert to base64 more reliably
-            const uint8Array = new Uint8Array(buffer);
-            const binaryString = uint8Array.reduce((acc, byte) => acc + String.fromCharCode(byte), '');
-            const audioBase64 = btoa(binaryString);
+    sendCompleteAudioSegment(audioBlob) {
+        try {
+            // Convert complete audio segment to base64
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
             
-            // Broadcast audio chunk to all participants
+            // Send complete audio segment
             this.room.send({
-                type: 'audioStream',
-                audioData: audioBase64,
-                mimeType: this.mediaRecorder.mimeType,
+                type: 'audioSegment',
+                audioData: base64Audio,
+                mimeType: 'audio/webm;codecs=opus',
                 timestamp: Date.now(),
-                echo: false // Don't echo back to sender
+                echo: false
             });
-        }).catch(error => {
-            console.error('Error converting audio to base64:', error);
-        });
+        } catch (error) {
+            console.error('Error sending audio segment:', error);
+        }
+    }
+
+    async playReceivedAudio(audioBase64, fromClientId, mimeType = 'audio/webm;codecs=opus') {
+        try {
+            // Convert base64 to blob
+            const binaryString = atob(audioBase64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            const audioBlob = new Blob([bytes], { type: mimeType });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            
+            // Create and play audio element
+            const audio = new Audio();
+            audio.src = audioUrl;
+            audio.volume = 0.7;
+            
+            // Play audio
+            await audio.play();
+            
+            // Clean up
+            audio.onended = () => {
+                URL.revokeObjectURL(audioUrl);
+            };
+            
+        } catch (error) {
+            console.error('Error playing received audio:', error);
+        }
     }
 
     initializeAudioPlayback() {
@@ -320,109 +344,6 @@ class WebsimRecordMode {
         
         // Create audio elements for each participant
         this.participantAudioElements = {};
-    }
-
-    async playReceivedAudio(audioBase64, fromClientId, mimeType = 'audio/webm') {
-        try {
-            // Convert base64 back to audio blob more reliably
-            const audioBlob = this.base64ToBlob(audioBase64, mimeType);
-            const audioUrl = URL.createObjectURL(audioBlob);
-            
-            // Get or create audio element for this participant
-            if (!this.participantAudioElements[fromClientId]) {
-                this.participantAudioElements[fromClientId] = new Audio();
-                this.participantAudioElements[fromClientId].volume = 0.8;
-                this.participantAudioElements[fromClientId].preload = 'auto';
-            }
-            
-            const audioElement = this.participantAudioElements[fromClientId];
-            
-            // Wait for previous audio to finish before playing new chunk
-            if (!audioElement.paused) {
-                audioElement.pause();
-            }
-            
-            audioElement.src = audioUrl;
-            
-            // Play the audio with error handling
-            try {
-                await audioElement.play();
-            } catch (playError) {
-                console.warn('Audio play failed, trying alternative approach:', playError);
-                // Alternative: create new audio element
-                const tempAudio = new Audio(audioUrl);
-                tempAudio.volume = 0.8;
-                await tempAudio.play();
-            }
-            
-            // Clean up URL after a delay
-            setTimeout(() => {
-                URL.revokeObjectURL(audioUrl);
-            }, 5000);
-            
-        } catch (error) {
-            console.error('Error playing received audio:', error);
-        }
-    }
-
-    base64ToBlob(base64, mimeType) {
-        try {
-            // More robust base64 to blob conversion
-            const binaryString = atob(base64);
-            const bytes = new Uint8Array(binaryString.length);
-            
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            
-            return new Blob([bytes], { type: mimeType });
-        } catch (error) {
-            console.error('Error converting base64 to blob:', error);
-            // Return empty blob as fallback
-            return new Blob([], { type: mimeType });
-        }
-    }
-
-    handleSpeechResult(event) {
-        let finalTranscript = '';
-        let interimTranscript = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-                finalTranscript += transcript + ' ';
-            } else {
-                interimTranscript += transcript;
-            }
-        }
-        
-        // Update current transcript with final results
-        if (finalTranscript) {
-            this.currentTranscript += finalTranscript;
-            this.updateLiveTranscription(this.currentTranscript, interimTranscript);
-            
-            // Update room state with transcript
-            this.room.updateRoomState({
-                transcript: this.currentTranscript
-            });
-        } else if (interimTranscript) {
-            this.updateLiveTranscription(this.currentTranscript, interimTranscript);
-        }
-    }
-
-    updateLiveTranscription(finalText, interimText) {
-        const currentUser = this.room.peers[this.room.clientId];
-        
-        this.transcriptionContent.innerHTML = `
-            <div class="transcription-line">
-                <div class="speaker-name">${currentUser.username}</div>
-                <div class="final-text">${finalText}</div>
-                <div class="interim-text">${interimText}</div>
-            </div>
-        `;
-        
-        // Scroll to bottom
-        this.transcriptionContent.scrollTop = this.transcriptionContent.scrollHeight;
     }
 
     async stopRecording() {
@@ -634,8 +555,8 @@ class WebsimRecordMode {
             case 'disconnected':
                 console.log(`${data.username} left the meeting`);
                 break;
-            case 'audioStream':
-                // Play received audio from other participants with mime type
+            case 'audioSegment':
+                // Play received audio segment
                 this.playReceivedAudio(data.audioData, data.clientId, data.mimeType);
                 break;
             case 'transmissionStopped':
