@@ -171,9 +171,16 @@ class WebsimRecordMode {
                 } 
             });
             
+            // Use a more compatible format for streaming
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+                ? 'audio/webm;codecs=opus' 
+                : MediaRecorder.isTypeSupported('audio/mp4;codecs=mp4a.40.2')
+                ? 'audio/mp4;codecs=mp4a.40.2'
+                : 'audio/webm';
+            
             // Set up MediaRecorder for audio storage AND streaming
             this.mediaRecorder = new MediaRecorder(this.audioStream, {
-                mimeType: 'audio/webm;codecs=opus'
+                mimeType: mimeType
             });
             
             this.recordedChunks = [];
@@ -206,8 +213,8 @@ class WebsimRecordMode {
                 this.recognition.start();
             }
             
-            // Start recording with smaller chunks for real-time streaming
-            this.mediaRecorder.start(200); // 200ms chunks for low latency
+            // Start recording with larger chunks for better stability
+            this.mediaRecorder.start(1000); // 1 second chunks for better stability
             this.isRecording = true;
             
             // Update UI
@@ -230,20 +237,24 @@ class WebsimRecordMode {
     }
 
     streamAudioToParticipants(audioData) {
-        // Convert audio data to base64 for transmission
-        const reader = new FileReader();
-        reader.onload = () => {
-            const audioBase64 = reader.result.split(',')[1];
+        // Use arrayBuffer for more reliable transmission
+        audioData.arrayBuffer().then(buffer => {
+            // Convert to base64 more reliably
+            const uint8Array = new Uint8Array(buffer);
+            const binaryString = uint8Array.reduce((acc, byte) => acc + String.fromCharCode(byte), '');
+            const audioBase64 = btoa(binaryString);
             
             // Broadcast audio chunk to all participants
             this.room.send({
                 type: 'audioStream',
                 audioData: audioBase64,
+                mimeType: this.mediaRecorder.mimeType,
                 timestamp: Date.now(),
                 echo: false // Don't echo back to sender
             });
-        };
-        reader.readAsDataURL(audioData);
+        }).catch(error => {
+            console.error('Error converting audio to base64:', error);
+        });
     }
 
     initializeAudioPlayback() {
@@ -255,28 +266,43 @@ class WebsimRecordMode {
         this.participantAudioElements = {};
     }
 
-    async playReceivedAudio(audioBase64, fromClientId) {
+    async playReceivedAudio(audioBase64, fromClientId, mimeType = 'audio/webm') {
         try {
-            // Convert base64 back to audio blob
-            const audioBlob = this.base64ToBlob(audioBase64, 'audio/webm');
+            // Convert base64 back to audio blob more reliably
+            const audioBlob = this.base64ToBlob(audioBase64, mimeType);
             const audioUrl = URL.createObjectURL(audioBlob);
             
             // Get or create audio element for this participant
             if (!this.participantAudioElements[fromClientId]) {
                 this.participantAudioElements[fromClientId] = new Audio();
                 this.participantAudioElements[fromClientId].volume = 0.8;
+                this.participantAudioElements[fromClientId].preload = 'auto';
             }
             
             const audioElement = this.participantAudioElements[fromClientId];
+            
+            // Wait for previous audio to finish before playing new chunk
+            if (!audioElement.paused) {
+                audioElement.pause();
+            }
+            
             audioElement.src = audioUrl;
             
-            // Play the audio
-            await audioElement.play();
+            // Play the audio with error handling
+            try {
+                await audioElement.play();
+            } catch (playError) {
+                console.warn('Audio play failed, trying alternative approach:', playError);
+                // Alternative: create new audio element
+                const tempAudio = new Audio(audioUrl);
+                tempAudio.volume = 0.8;
+                await tempAudio.play();
+            }
             
-            // Clean up URL after playing
-            audioElement.onended = () => {
+            // Clean up URL after a delay
+            setTimeout(() => {
                 URL.revokeObjectURL(audioUrl);
-            };
+            }, 5000);
             
         } catch (error) {
             console.error('Error playing received audio:', error);
@@ -284,13 +310,21 @@ class WebsimRecordMode {
     }
 
     base64ToBlob(base64, mimeType) {
-        const bytes = atob(base64);
-        const byteNumbers = new Array(bytes.length);
-        for (let i = 0; i < bytes.length; i++) {
-            byteNumbers[i] = bytes.charCodeAt(i);
+        try {
+            // More robust base64 to blob conversion
+            const binaryString = atob(base64);
+            const bytes = new Uint8Array(binaryString.length);
+            
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            return new Blob([bytes], { type: mimeType });
+        } catch (error) {
+            console.error('Error converting base64 to blob:', error);
+            // Return empty blob as fallback
+            return new Blob([], { type: mimeType });
         }
-        const byteArray = new Uint8Array(byteNumbers);
-        return new Blob([byteArray], { type: mimeType });
     }
 
     handleSpeechResult(event) {
@@ -494,8 +528,8 @@ class WebsimRecordMode {
                 console.log(`${data.username} left the meeting`);
                 break;
             case 'audioStream':
-                // Play received audio from other participants
-                this.playReceivedAudio(data.audioData, data.clientId);
+                // Play received audio from other participants with mime type
+                this.playReceivedAudio(data.audioData, data.clientId, data.mimeType);
                 break;
             case 'transmissionStopped':
                 console.log(`${data.username} stopped transmission`);
