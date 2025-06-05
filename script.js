@@ -289,7 +289,7 @@ class WebsimRecordMode {
         }
     }
 
-    sendCompleteAudioSegment(audioBlob) {
+    async sendCompleteAudioSegment(audioBlob) {
         try {
             // Convert complete audio segment to base64
             const arrayBuffer = await audioBlob.arrayBuffer();
