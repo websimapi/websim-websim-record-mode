@@ -7,6 +7,8 @@ class WebsimRecordMode {
         this.isRecording = false;
         this.isHost = false;
         this.currentTranscript = '';
+        this.heartbeatInterval = null;
+        this.participantHeartbeats = {};
         
         this.initializeElements();
         this.setupEventListeners();
@@ -101,7 +103,13 @@ class WebsimRecordMode {
         if (!this.isInMeeting()) return;
         
         this.participantsList.innerHTML = '';
-        Object.values(this.room.peers).forEach(peer => {
+        
+        // Use heartbeat tracking for more accurate participant list
+        const activeParticipants = Object.keys(this.participantHeartbeats)
+            .filter(clientId => this.room.peers[clientId])
+            .map(clientId => this.room.peers[clientId]);
+        
+        activeParticipants.forEach(peer => {
             const participantDiv = document.createElement('div');
             participantDiv.className = 'participant-item';
             participantDiv.innerHTML = `
@@ -110,6 +118,9 @@ class WebsimRecordMode {
             `;
             this.participantsList.appendChild(participantDiv);
         });
+        
+        // Also update the count on setup screen
+        this.updateParticipantsCount();
     }
 
     async hostMeeting() {
@@ -136,6 +147,7 @@ class WebsimRecordMode {
         this.analysisResults.classList.add('hidden');
         
         this.updateParticipantsList();
+        this.startHeartbeat();
     }
 
     leaveMeeting() {
@@ -146,6 +158,8 @@ class WebsimRecordMode {
         if (this.isRecording) {
             this.stopRecording();
         }
+        
+        this.stopHeartbeat();
     }
 
     isInMeeting() {
@@ -519,13 +533,81 @@ class WebsimRecordMode {
         this.meetingSetup.classList.remove('hidden');
     }
 
+    startHeartbeat() {
+        // Send heartbeat every 3 seconds to check participant connectivity
+        this.heartbeatInterval = setInterval(() => {
+            this.sendHeartbeat();
+            this.checkParticipantActivity();
+        }, 3000);
+        
+        // Initialize heartbeat tracking for current participants
+        Object.keys(this.room.peers).forEach(clientId => {
+            this.participantHeartbeats[clientId] = Date.now();
+        });
+    }
+
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+        }
+        this.participantHeartbeats = {};
+    }
+
+    sendHeartbeat() {
+        this.room.send({
+            type: 'heartbeat',
+            timestamp: Date.now(),
+            echo: false
+        });
+    }
+
+    checkParticipantActivity() {
+        const now = Date.now();
+        const timeout = 10000; // 10 seconds timeout
+        
+        // Remove participants who haven't sent heartbeat recently
+        Object.keys(this.participantHeartbeats).forEach(clientId => {
+            if (now - this.participantHeartbeats[clientId] > timeout) {
+                delete this.participantHeartbeats[clientId];
+                // Force update participants list
+                this.updateParticipantsList();
+            }
+        });
+        
+        // Add any new participants from room.peers
+        Object.keys(this.room.peers).forEach(clientId => {
+            if (!this.participantHeartbeats[clientId]) {
+                this.participantHeartbeats[clientId] = now;
+            }
+        });
+    }
+
     handleRoomEvent(data) {
         switch (data.type) {
             case 'connected':
                 console.log(`${data.username} joined the meeting`);
+                this.participantHeartbeats[data.clientId] = Date.now();
+                this.updateParticipantsList();
                 break;
             case 'disconnected':
                 console.log(`${data.username} left the meeting`);
+                delete this.participantHeartbeats[data.clientId];
+                this.updateParticipantsList();
+                break;
+            case 'heartbeat':
+                // Update last seen time for this participant
+                this.participantHeartbeats[data.clientId] = data.timestamp;
+                // Respond with our own heartbeat
+                this.room.send({
+                    type: 'heartbeatResponse',
+                    timestamp: Date.now(),
+                    echo: false
+                });
+                break;
+            case 'heartbeatResponse':
+                // Update last seen time for this participant
+                this.participantHeartbeats[data.clientId] = data.timestamp;
                 break;
             case 'audioStream':
                 // Play received audio from other participants with mime type
