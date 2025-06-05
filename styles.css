@@ -280,6 +280,17 @@ body {
     margin-bottom: 4px;
 }
 
+.final-text {
+    color: #374151;
+    line-height: 1.5;
+}
+
+.interim-text {
+    color: #9ca3af;
+    font-style: italic;
+    line-height: 1.5;
+}
+
 /* Analysis Results */
 .results-header {
     display: flex;
@@ -386,4 +397,3 @@ body {
         justify-content: center;
     }
 }
-

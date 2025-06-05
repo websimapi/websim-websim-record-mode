@@ -171,7 +171,7 @@ class WebsimRecordMode {
                 } 
             });
             
-            // Set up MediaRecorder
+            // Set up MediaRecorder for audio storage
             this.mediaRecorder = new MediaRecorder(this.audioStream, {
                 mimeType: 'audio/webm;codecs=opus'
             });
@@ -184,12 +184,27 @@ class WebsimRecordMode {
                 }
             };
             
-            this.mediaRecorder.onstop = () => {
-                this.processRecording();
-            };
+            // Set up Speech Recognition for live transcription
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                this.recognition = new SpeechRecognition();
+                this.recognition.continuous = true;
+                this.recognition.interimResults = true;
+                this.recognition.lang = 'en-US';
+                
+                this.recognition.onresult = (event) => {
+                    this.handleSpeechResult(event);
+                };
+                
+                this.recognition.onerror = (event) => {
+                    console.error('Speech recognition error:', event.error);
+                };
+                
+                this.recognition.start();
+            }
             
             // Start recording
-            this.mediaRecorder.start(1000); // Collect data every second
+            this.mediaRecorder.start(1000);
             this.isRecording = true;
             
             // Update UI
@@ -199,7 +214,7 @@ class WebsimRecordMode {
             this.recordingText.textContent = 'Recording in progress...';
             
             // Clear previous transcription
-            this.transcriptionContent.innerHTML = '<p class="placeholder-text">Listening...</p>';
+            this.transcriptionContent.innerHTML = '<p class="placeholder-text">Start speaking...</p>';
             this.currentTranscript = '';
             
         } catch (error) {
@@ -208,9 +223,57 @@ class WebsimRecordMode {
         }
     }
 
+    handleSpeechResult(event) {
+        let finalTranscript = '';
+        let interimTranscript = '';
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                finalTranscript += transcript + ' ';
+            } else {
+                interimTranscript += transcript;
+            }
+        }
+        
+        // Update current transcript with final results
+        if (finalTranscript) {
+            this.currentTranscript += finalTranscript;
+            this.updateLiveTranscription(this.currentTranscript, interimTranscript);
+            
+            // Update room state with transcript
+            this.room.updateRoomState({
+                transcript: this.currentTranscript
+            });
+        } else if (interimTranscript) {
+            this.updateLiveTranscription(this.currentTranscript, interimTranscript);
+        }
+    }
+
+    updateLiveTranscription(finalText, interimText) {
+        const currentUser = this.room.peers[this.room.clientId];
+        
+        this.transcriptionContent.innerHTML = `
+            <div class="transcription-line">
+                <div class="speaker-name">${currentUser.username}</div>
+                <div class="final-text">${finalText}</div>
+                <div class="interim-text">${interimText}</div>
+            </div>
+        `;
+        
+        // Scroll to bottom
+        this.transcriptionContent.scrollTop = this.transcriptionContent.scrollHeight;
+    }
+
     async stopRecording() {
         if (this.mediaRecorder && this.isRecording) {
             this.mediaRecorder.stop();
+            
+            // Stop speech recognition
+            if (this.recognition) {
+                this.recognition.stop();
+            }
+            
             this.audioStream.getTracks().forEach(track => track.stop());
             
             this.isRecording = false;
@@ -219,67 +282,8 @@ class WebsimRecordMode {
             this.recordBtn.innerHTML = '<span class="btn-icon">🎙️</span> Start Recording';
             this.recordBtn.classList.remove('danger');
             this.recordingStatus.classList.remove('recording');
-            this.recordingText.textContent = 'Processing recording...';
+            this.recordingText.textContent = 'Recording complete';
         }
-    }
-
-    async processRecording() {
-        try {
-            // Create audio blob
-            const audioBlob = new Blob(this.recordedChunks, { type: 'audio/webm' });
-            
-            // Convert to a format suitable for transcription
-            const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.webm');
-            
-            // For demo purposes, we'll simulate transcription
-            // In a real implementation, you'd send this to a speech-to-text service
-            await this.simulateTranscription(audioBlob);
-            
-        } catch (error) {
-            console.error('Error processing recording:', error);
-            this.recordingText.textContent = 'Error processing recording';
-        }
-    }
-
-    async simulateTranscription(audioBlob) {
-        // Simulate transcription delay
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // For demo purposes, generate a sample transcript
-        const sampleTranscripts = [
-            "Let's discuss the new feature implementation for our project. We need to focus on user experience and performance optimization.",
-            "Today we're brainstorming ideas for the Q4 roadmap. The key priorities are scalability, security, and user engagement.",
-            "We should implement real-time collaboration features and improve the overall workflow for our users.",
-            "The meeting covered three main topics: technical architecture, user interface design, and deployment strategy."
-        ];
-        
-        const randomTranscript = sampleTranscripts[Math.floor(Math.random() * sampleTranscripts.length)];
-        this.currentTranscript = randomTranscript;
-        
-        // Update transcription in real-time
-        this.updateTranscription(randomTranscript);
-        
-        // Update room state with transcript
-        this.room.updateRoomState({
-            transcript: this.currentTranscript
-        });
-        
-        this.recordingText.textContent = 'Recording complete';
-    }
-
-    updateTranscription(text) {
-        const transcriptionDiv = document.createElement('div');
-        transcriptionDiv.className = 'transcription-line';
-        
-        const currentUser = this.room.peers[this.room.clientId];
-        transcriptionDiv.innerHTML = `
-            <div class="speaker-name">${currentUser.username}</div>
-            <div>${text}</div>
-        `;
-        
-        this.transcriptionContent.innerHTML = '';
-        this.transcriptionContent.appendChild(transcriptionDiv);
     }
 
     async endMeeting() {
@@ -423,4 +427,3 @@ class WebsimRecordMode {
 document.addEventListener('DOMContentLoaded', () => {
     new WebsimRecordMode();
 });
-
