@@ -566,6 +566,68 @@ class WebsimRecordMode {
                 console.log('Received event:', data);
         }
     }
+
+    handleSpeechResult(event) {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+                finalTranscript += event.results[i][0].transcript;
+            } else {
+                interimTranscript += event.results[i][0].transcript;
+            }
+        }
+
+        // Update the transcription content
+        if (this.transcriptionContent.querySelector('.placeholder-text')) {
+            this.transcriptionContent.innerHTML = ''; // Clear placeholder
+        }
+        
+        // Remove previous interim line if exists
+        const existingInterim = this.transcriptionContent.querySelector('.interim-text');
+        if (existingInterim) {
+            existingInterim.remove();
+        }
+
+        if (finalTranscript) {
+            const finalLine = document.createElement('div');
+            finalLine.className = 'transcription-line';
+            
+            const speakerName = document.createElement('div');
+            speakerName.className = 'speaker-name';
+            speakerName.textContent = this.room.peers[this.room.clientId].username + ':'; // Or a generic "Speaker"
+            
+            const finalContent = document.createElement('div');
+            finalContent.className = 'final-text';
+            finalContent.textContent = finalTranscript;
+            
+            finalLine.appendChild(speakerName);
+            finalLine.appendChild(finalContent);
+            this.transcriptionContent.appendChild(finalLine);
+            
+            this.currentTranscript += `${this.room.peers[this.room.clientId].username}: ${finalTranscript}\n`;
+        }
+
+        if (interimTranscript) {
+            const interimLine = document.createElement('div');
+            interimLine.className = 'transcription-line';
+
+            const speakerName = document.createElement('div');
+            speakerName.className = 'speaker-name';
+            speakerName.textContent = this.room.peers[this.room.clientId].username + ':'; // Or a generic "Speaker"
+
+            const interimContent = document.createElement('div');
+            interimContent.className = 'interim-text';
+            interimContent.textContent = interimTranscript;
+            
+            interimLine.appendChild(speakerName);
+            interimLine.appendChild(interimContent);
+            this.transcriptionContent.appendChild(interimLine);
+        }
+        
+        this.transcriptionContent.scrollTop = this.transcriptionContent.scrollHeight;
+    }
 }
 
 // Initialize the application when the page loads
